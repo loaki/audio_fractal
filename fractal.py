@@ -1,6 +1,7 @@
 import pygame
 import numpy as np
 from numba import jit, prange
+import threading
 
 # Pygame initialization
 pygame.init()
@@ -8,23 +9,24 @@ width, height = 600, 600
 screen = pygame.display.set_mode((width, height))
 pygame.display.set_caption("Mandelbrot Fractal")
 
+# Set up the clock for controlling the frame rate
+fps = 100
+frame_duration = 1000 // fps
+clock = pygame.time.Clock()
+
 # Mandelbrot parameters
-max_iterations = 100
+max_iterations = 200
 x_min, x_max = -2.0, 1.0
 y_min, y_max = -1.5, 1.5
-zoom_factor = 0.95  # Zoom factor (0 to 1)
+zoom_factor = 0.99  # Zoom factor (0 to 1)
 zoom_position_x, zoom_position_y = -0.7462, -0.1495  # Seahorse Valley zoom position
-zoom_duration = 300  # Number of zoom iterations
+zoom_duration = 5000  # Number of zoom iterations
 
 # Define color variables
 red_multiplier = 0.7
 green_multiplier = 0.0
 blue_multiplier = 0.9
 
-# Set up the clock for controlling the frame rate
-fps = 120
-frame_duration = 1000 // fps
-clock = pygame.time.Clock()
 
 @jit(nopython=True, parallel=True)
 def mandelbrot(c, max_iterations):
@@ -43,7 +45,11 @@ def mandelbrot(c, max_iterations):
 
     return iterations
 
-def draw_fractal(screen, x_min, x_max, y_min, y_max, max_iterations):
+def draw_fractal(screen, colors):
+    pygame.surfarray.blit_array(screen, colors.swapaxes(0, 1))
+    pygame.display.flip()
+
+def calculate_fractal(x_min, x_max, y_min, y_max, max_iterations):
     real, imag = np.meshgrid(np.linspace(x_min, x_max, width), np.linspace(y_min, y_max, height))
     c = real + 1j * imag
     iterations = mandelbrot(c, max_iterations)
@@ -54,9 +60,7 @@ def draw_fractal(screen, x_min, x_max, y_min, y_max, max_iterations):
     colors[:, :, 1] = np.clip(255 * green_multiplier * np.cos(iterations / max_iterations * np.pi) ** 2, 0, 255)  # Green component
     colors[:, :, 2] = np.clip(255 * blue_multiplier * np.sin(iterations / max_iterations * np.pi) * np.cos(iterations / max_iterations * np.pi), 0, 255)  # Blue component
 
-    # Draw the rotated fractal on the screen
-    pygame.surfarray.blit_array(screen, colors.swapaxes(0, 1))
-    pygame.display.flip()
+    return colors
 
 def calculate_zoom(x_min, x_max, y_min, y_max, zoom_factor):
     # Calculate the new center
@@ -79,6 +83,16 @@ def smooth_zoom(current_zoom, target_zoom, zoom_iteration, zoom_duration):
     t = zoom_iteration / zoom_duration
     return current_zoom + (target_zoom - current_zoom) * t
 
+def render_thread():
+    global x_min, x_max, y_min, y_max
+    while True:
+        colors = calculate_fractal(x_min, x_max, y_min, y_max, max_iterations)
+        draw_fractal(screen, colors)
+
+render_thread = threading.Thread(target=render_thread)
+render_thread.daemon = True
+render_thread.start()
+
 zoom_iteration = 0
 running = True
 current_zoom = 1.0
@@ -89,17 +103,18 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE: # Press 'f' to toggle fullscreen
+                running = False
 
-    if zoom_iteration % 10 == 0:
-        green_multiplier = 0.1
-        red_multiplier = 2
-        blue_multiplier = 3
-    else:
-        red_multiplier = 0.7
-        green_multiplier = 0.0
-        blue_multiplier = 0.9
-
-    draw_fractal(screen, x_min, x_max, y_min, y_max, max_iterations)
+    # if zoom_iteration % 50 == 0:
+    #     green_multiplier = 0.1
+    #     red_multiplier = 2
+    #     blue_multiplier = 3
+    # else:
+    #     red_multiplier = 0.7
+    #     green_multiplier = 0.0
+    #     blue_multiplier = 0.9
 
     if zoom_iteration < zoom_duration:
         current_zoom = smooth_zoom(current_zoom, zoom_factor, zoom_iteration, zoom_duration)
