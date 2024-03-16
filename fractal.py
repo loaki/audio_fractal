@@ -1,115 +1,131 @@
-import pygame as pg
+import pygame
 import numpy as np
-import taichi as ti
+from numba import jit, prange
 
-# settings
-res = width, height = 1200, 800 # with modern video card with CUDA support - increase res '1600, 900' and set 'ti.init(arch=ti.cuda)'
-offset = np.array([1.3 * width, height]) // 2
-# texture
-texture = pg.image.load('img/grad.webp')
-texture_size = min(texture.get_size()) - 1
-texture_array = pg.surfarray.array3d(texture).astype(dtype=np.uint32)
+# Pygame initialization
+pygame.init()
+width, height = 600, 600
+screen = pygame.display.set_mode((width, height))
+pygame.display.set_caption("Mandelbrot Fractal")
 
+# Mandelbrot parameters
+max_iterations = 100
+x_min, x_max = -2.0, 1.0
+y_min, y_max = -1.5, 1.5
+zoom_factor = 0.95  # Zoom factor (0 to 1)
+zoom_position_x, zoom_position_y = -0.7462, -0.1495  # Seahorse Valley zoom position
+zoom_duration = 300  # Number of zoom iterations
 
-@ti.data_oriented
-class Fractal:
-    def __init__(self, app):
-        self.app = app
-        self.screen_array = np.full((width, height, 3), [0, 0, 0], dtype=np.uint32)
-        # taichi architecture, you can use ti.cpu, ti.cuda, ti.opengl, ti.vulkan, ti.metal
-        ti.init(arch=ti.cpu)
-        # taichi fields
-        self.screen_field = ti.Vector.field(3, ti.uint32, (width, height))
-        self.texture_field = ti.Vector.field(3, ti.uint32, texture.get_size())
-        self.texture_field.from_numpy(texture_array)
-        # control settings
-        self.vel = 0.01
-        self.zoom, self.scale = 2.2 / height, 0.993
-        self.increment = ti.Vector([0.0, 0.0])
-        self.max_iter, self.max_iter_limit = 30, 5500
-        # delta_time
-        self.app_speed = 1 / 4000
-        self.prev_time = pg.time.get_ticks()
+# Define color variables
+red_multiplier = 0.7
+green_multiplier = 0.0
+blue_multiplier = 0.9
 
-    def delta_time(self):
-        time_now = pg.time.get_ticks() - self.prev_time
-        self.prev_time = time_now
-        return time_now * self.app_speed
+# Set up the clock for controlling the frame rate
+fps = 120
+frame_duration = 1000 // fps
+clock = pygame.time.Clock()
 
-    @ti.kernel
-    def render(self, max_iter: ti.int32, zoom: ti.float32, dx: ti.float32, dy: ti.float32):
-        for x, y in self.screen_field: # parallelization loop
-            c = ti.Vector([(x - offset[0]) * zoom - dx, (y - offset[1]) * zoom - dy])
-            z = ti.Vector([0.0, 0.0])
-            num_iter = 0
-            for i in range(max_iter):
-                z = ti.Vector([(z.x ** 2 - z.y ** 2 + c.x), (2 * z.x * z.y + c.y)])
-                if z.dot(z) > 4:
+@jit(nopython=True, parallel=True)
+def mandelbrot(c, max_iterations):
+    height, width = c.shape
+    iterations = np.zeros((height, width), dtype=np.int64)
+
+    for y in prange(height):
+        for x in prange(width):
+            zy, zx = 0, 0
+            c_value = c[y, x]
+            for i in range(max_iterations):
+                zy, zx = zy * zx * 2 + c_value.imag, zx * zx - zy * zy + c_value.real
+                if zx * zx + zy * zy > 4:
                     break
-                num_iter += 1
-            col = int(texture_size * num_iter / max_iter)
-            self.screen_field[x, y] = self.texture_field[col, col]
+                iterations[y, x] = i
 
-    def control(self):
-        pressed_key = pg.key.get_pressed()
-        dt = self.delta_time()
-        # movement
-        if pressed_key[pg.K_a]:
-            self.increment[0] += self.vel * dt
-        if pressed_key[pg.K_d]:
-            self.increment[0] -= self.vel * dt
-        if pressed_key[pg.K_w]:
-            self.increment[1] += self.vel * dt
-        if pressed_key[pg.K_s]:
-            self.increment[1] -= self.vel * dt
+    return iterations
 
-        # stable zoom and movement
-        if pressed_key[pg.K_UP] or pressed_key[pg.K_DOWN]:
-            inv_scale = 2 - self.scale
-            if pressed_key[pg.K_UP]:
-                self.zoom *= self.scale
-                self.vel *= self.scale
-            if pressed_key[pg.K_DOWN]:
-                self.zoom *= inv_scale
-                self.vel *= inv_scale
+def draw_fractal(screen, x_min, x_max, y_min, y_max, max_iterations):
+    real, imag = np.meshgrid(np.linspace(x_min, x_max, width), np.linspace(y_min, y_max, height))
+    c = real + 1j * imag
+    iterations = mandelbrot(c, max_iterations)
 
-        # mandelbrot resolution
-        if pressed_key[pg.K_LEFT]:
-            self.max_iter -= 1
-        if pressed_key[pg.K_RIGHT]:
-            self.max_iter += 1
-        self.max_iter = min(max(self.max_iter, 2), self.max_iter_limit)
+    # Map the number of iterations to colors
+    colors = np.zeros((height, width, 3), dtype=np.uint8)
+    colors[:, :, 0] = np.clip(255 * red_multiplier * np.sin(iterations / max_iterations * np.pi) ** 2, 0, 255)  # Red component
+    colors[:, :, 1] = np.clip(255 * green_multiplier * np.cos(iterations / max_iterations * np.pi) ** 2, 0, 255)  # Green component
+    colors[:, :, 2] = np.clip(255 * blue_multiplier * np.sin(iterations / max_iterations * np.pi) * np.cos(iterations / max_iterations * np.pi), 0, 255)  # Blue component
 
-    def update(self):
-        self.control()
-        self.render(self.max_iter, self.zoom, self.increment[0], self.increment[1])
-        self.screen_array = self.screen_field.to_numpy()
+    # Draw the rotated fractal on the screen
+    pygame.surfarray.blit_array(screen, colors.swapaxes(0, 1))
+    pygame.display.flip()
 
-    def draw(self):
-        pg.surfarray.blit_array(self.app.screen, self.screen_array)
+def calculate_zoom(x_min, x_max, y_min, y_max, zoom_factor):
+    # Calculate the new center
+    center_x = (x_min + x_max) / 2
+    center_y = (y_min + y_max) / 2
 
-    def run(self):
-        self.update()
-        self.draw()
+    # Calculate the new range
+    range_x = (x_max - x_min) * zoom_factor
+    range_y = (y_max - y_min) * zoom_factor
 
+    # Update the boundaries with the new zoom
+    x_min = center_x - range_x / 2
+    x_max = center_x + range_x / 2
+    y_min = center_y - range_y / 2
+    y_max = center_y + range_y / 2
 
-class App:
-    def __init__(self):
-        self.screen = pg.display.set_mode(res, pg.SCALED)
-        self.clock = pg.time.Clock()
-        self.fractal = Fractal(self)
+    return x_min, x_max, y_min, y_max
 
-    def run(self):
-        while True:
-            self.screen.fill('black')
-            self.fractal.run()
-            pg.display.flip()
+def smooth_zoom(current_zoom, target_zoom, zoom_iteration, zoom_duration):
+    t = zoom_iteration / zoom_duration
+    return current_zoom + (target_zoom - current_zoom) * t
 
-            [exit() for i in pg.event.get() if i.type == pg.QUIT]
-            self.clock.tick()
-            pg.display.set_caption(f'FPS: {self.clock.get_fps() :.2f}')
+zoom_iteration = 0
+running = True
+current_zoom = 1.0
+target_zoom = 1.0
+original_x_min, original_x_max, original_y_min, original_y_max = x_min, x_max, y_min, y_max
 
+while running:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
 
-if __name__ == '__main__':
-    app = App()
-    app.run()
+    if zoom_iteration % 10 == 0:
+        green_multiplier = 0.1
+        red_multiplier = 2
+        blue_multiplier = 3
+    else:
+        red_multiplier = 0.7
+        green_multiplier = 0.0
+        blue_multiplier = 0.9
+
+    draw_fractal(screen, x_min, x_max, y_min, y_max, max_iterations)
+
+    if zoom_iteration < zoom_duration:
+        current_zoom = smooth_zoom(current_zoom, zoom_factor, zoom_iteration, zoom_duration)
+        zoom_iteration += 1
+    else:
+        x_min, x_max, y_min, y_max = original_x_min, original_x_max, original_y_min, original_y_max
+        current_zoom = 1.0
+        zoom_iteration = 0
+
+    # Update the boundaries with the new zoom
+    if current_zoom != 1.0:
+        # Calculate the new center based on the zoom position
+        zoom_x = (zoom_position_x - x_min) / (x_max - x_min)
+        zoom_y = (zoom_position_y - y_min) / (y_max - y_min)
+
+        # Calculate the new range based on the zoom factor
+        range_x = (x_max - x_min) * current_zoom
+        range_y = (y_max - y_min) * current_zoom
+
+        # Update the boundaries with the new zoom
+        x_min = zoom_position_x - range_x * zoom_x
+        x_max = zoom_position_x + range_x * (1 - zoom_x)
+        y_min = zoom_position_y - range_y * zoom_y
+        y_max = zoom_position_y + range_y * (1 - zoom_y)
+
+    # Add a delay to control the frame rate
+    pygame.time.wait(frame_duration)
+
+pygame.quit()
