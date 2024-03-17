@@ -3,10 +3,11 @@ import numpy as np
 from numba import jit, prange
 import threading
 import math
+import colorsys
+import random
 
 class RenderData:
     fps: int
-    frame_duration: int
 
     max_iterations: int
     x_min: float
@@ -14,6 +15,7 @@ class RenderData:
     y_min: float
     y_max: float
     zoom_factor: float
+    zoom_sign: int
     zoom_position_x: float
     zoom_position_y: float
     zoom_duration: int
@@ -23,6 +25,7 @@ class RenderData:
     blue_multiplier: float
 
     constant: complex
+    color_palette: list
 
 @jit(nopython=True, parallel=True)
 def mandelbrot(c, max_iterations, constant = None):
@@ -56,20 +59,22 @@ def julia(c, max_iterations, julia_constant):
                 if zx * zx + zy * zy > 4:
                     break
                 iterations[y, x] = i
-
+                if i > 0 and (zx, zy) == (c[y, x].real, c[y, x].imag):
+                    iterations[y, x] = max_iterations
+                    break
     return iterations
 
 def draw_fractal(screen, colors, clock):
     global last_time
     pygame.surfarray.blit_array(screen, colors.swapaxes(0, 1))
-    fps = clock.get_fps()
-    fps_font = pygame.font.Font(None, 20)
-    fps_text = fps_font.render(str(int(fps)), True, (200, 200, 200))
-    screen.blit(fps_text, (10, 10))
+    # fps = clock.get_fps()
+    # fps_font = pygame.font.Font(None, 20)
+    # fps_text = fps_font.render(str(int(fps)), True, (200, 200, 200))
+    # screen.blit(fps_text, (10, 10))
     pygame.display.flip()
 
 
-def calculate_fractal(data: RenderData, height, width, fractal_set):
+def calculate_fractal(data: RenderData, width, height, fractal_set):
     real, imag = np.meshgrid(
         np.linspace(data.x_min, data.x_max, width), np.linspace(data.y_min, data.y_max, height)
     )
@@ -78,20 +83,8 @@ def calculate_fractal(data: RenderData, height, width, fractal_set):
 
     # Map the number of iterations to colors
     colors = np.zeros((height, width, 3), dtype=np.uint8)
-    colors[:, :, 0] = np.clip(
-        255 * data.red_multiplier * np.sin(iterations / data.max_iterations * np.pi) ** 2, 0, 255
-    )  # Red component
-    colors[:, :, 1] = np.clip(
-        255 * data.green_multiplier * np.cos(iterations / data.max_iterations * np.pi) ** 2, 0, 255
-    )  # Green component
-    colors[:, :, 2] = np.clip(
-        255
-        * data.blue_multiplier
-        * np.sin(iterations / data.max_iterations * np.pi)
-        * np.cos(iterations / data.max_iterations * np.pi),
-        0,
-        255,
-    )  # Blue component
+    for i in range(len(data.color_palette)):
+        colors[iterations == i] = data.color_palette[i]
 
     return colors
 
@@ -130,7 +123,6 @@ def init_mandelbrot():
 
     # Set up the clock for controlling the frame rate
     data.fps = 60
-    data.frame_duration = 1000 // data.fps
 
     # Mandelbrot parameters
     data.max_iterations = 200
@@ -139,6 +131,7 @@ def init_mandelbrot():
     data.y_min = -1.5
     data.y_max = 1.5
     data.zoom_factor = 0.995  # Zoom factor (0 to 1)
+    data.zoom_sign = 1
     data.zoom_position_x = -0.7462
     data.zoom_position_y = -0.1495  # Seahorse Valley zoom position
     data.zoom_duration = 900  # Number of zoom iterations
@@ -158,15 +151,15 @@ def init_julia():
 
     # Set up the clock for controlling the frame rate
     data.fps = 120
-    data.frame_duration = 1000 // data.fps
 
     # Julia set parameters
-    data.max_iterations = 500
+    data.max_iterations = 300
     data.x_min = -2.0
     data.x_max = 2.0
     data.y_min = -2.0
     data.y_max = 2.0
-    data.zoom_factor = 0.995  # Zoom factor (0 to 1)
+    data.zoom_factor = 0.997  # Zoom factor (0 to 1)
+    data.zoom_sign = 1
     data.zoom_position_x = -0.527504221
     data.zoom_position_y = 0.075911712  # Set center for Julia set
     data.zoom_duration = 1500  # Number of zoom iterations
@@ -181,8 +174,63 @@ def init_julia():
 
     data.constant = complex(-0.8, 0.156)
 
+    data.color_palette = generate_palette([[0, 0, 0], [255, 255, 255]], 300)
+
     return data, julia
 
+
+def edit_var(data, i):
+    # if i % 70 < 5:
+    #     data.red_multiplier = 1.8
+    #     data.green_multiplier = 0.1
+    #     data.blue_multiplier = 1.9
+    # else:
+    #     data.red_multiplier = 0.9
+    #     data.green_multiplier = 0.05
+    #     data.blue_multiplier = 0.7
+
+    # data.zoom_factor = data.zoom_factor + 0.000007 * data.zoom_sign
+    data.cx += (2*math.sin(i%50)-1) * 0.00001
+    data.cy -= (2*math.sin(i%50)-1) * 0.00012
+    # data.cy *= (0.999 + math.tan(i/50) / 1000)
+    data.red_multiplier -= (2*math.sin(i%50)-1) * 0.001
+    data.green_multiplier -= (2*math.sin(i%50)-1) * 0.0001
+    data.blue_multiplier -= (2*math.sin(i%50)-1) * 0.003
+    # print(math.cos(i/100) / 300)
+    # data.cy += math.sin(i/10) / 300
+    data.constant = complex(data.cx, data.cy)
+
+def luminance(color):
+    # Calculate luminance based on RGB values
+    r, g, b = color
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+def generate_palette(points, num_colors):
+    # Sort points based on luminance and index to maintain relative order
+    sorted_points = sorted(points, key=lambda x: (luminance(x), points.index(x)))
+
+    num_points = len(sorted_points)
+    palette = []
+
+    # Calculate the number of colors between each pair of points
+    colors_between_points = num_colors // (num_points - 1)
+    remainder = num_colors % (num_points - 1)  # Distribute remaining colors evenly
+
+    # Iterate over each pair of adjacent points
+    for i in range(num_points - 1):
+        color1 = sorted_points[i]
+        color2 = sorted_points[i + 1]
+
+        # Calculate the number of colors for the current pair of points
+        colors_for_pair = colors_between_points + (1 if i < remainder else 0)
+
+        # Interpolate between the colors of the current pair of points
+        for j in range(colors_for_pair):
+            ratio = j / (colors_for_pair - 1)
+            color = np.array(color1) * (1 - ratio) + np.array(color2) * ratio
+            palette.append([int(c) for c in color])
+
+    return palette
 
 def display(data: RenderData, fractal_set):
     # Pygame initialization
@@ -196,12 +244,6 @@ def display(data: RenderData, fractal_set):
     zoom_iteration = 0
     running = True
     current_zoom = 1.0
-    original_x_min, original_x_max, original_y_min, original_y_max = (
-        data.x_min,
-        data.x_max,
-        data.y_min,
-        data.y_max,
-    )
 
     render_thread = threading.Thread(target=render_fractal, args=[screen, width, height, data, fractal_set, clock])
     render_thread.daemon = True
@@ -210,30 +252,19 @@ def display(data: RenderData, fractal_set):
     i = 0
     while running:
         i+=1
-        if i % 70 < 5:
-            data.red_multiplier = 1.8
-            data.green_multiplier = 0.1
-            data.blue_multiplier = 1.9
-        else:
-            data.red_multiplier = 0.9
-            data.green_multiplier = 0.05
-            data.blue_multiplier = 0.7
-
-        data.zoom_factor = min(data.zoom_factor + 0.000001, 1)
-        data.cx += (2*math.sin(i/69)-1) * 0.00011
-        data.cy -= (2*math.sin(i/42)-1) * 0.00012
-        # data.cy *= (0.999 + math.tan(i/50) / 1000)
-        data.red_multiplier -= math.sin(i/50) / 400
-        data.green_multiplier -= math.cos(i/50) / 1500
-        data.blue_multiplier -= math.cos(i/50) / 500
-        # print(math.cos(i/100) / 300)
-        # data.cy += math.sin(i/10) / 300
-        data.constant = complex(data.cx, data.cy)
+        # edit_var(data, i)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_c:  # Press 'f' to toggle fullscreen
+                    data.max_iterations = 500
+                    nb_color = 8
+                    rng_colors = [[0, 0, 0]] * nb_color
+                    for i in range(1, nb_color):
+                        rng_colors[i] = [random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)]
+                    data.color_palette = generate_palette(rng_colors, 500)
                 if event.key == pygame.K_ESCAPE:  # Press 'f' to toggle fullscreen
                     running = False
 
@@ -243,14 +274,15 @@ def display(data: RenderData, fractal_set):
             )
             zoom_iteration += 1
         else:
-            data.x_min, data.x_max, data.y_min, data.y_max = (
-                original_x_min,
-                original_x_max,
-                original_y_min,
-                original_y_max,
-            )
-            data.zoom_factor = 0.995
-            current_zoom = 1.0
+            # data.x_min, data.x_max, data.y_min, data.y_max= (
+            #     original_x_min,
+            #     original_x_max,
+            #     original_y_min,
+            #     original_y_max,
+            # )
+            data.zoom_factor = data.zoom_sign * abs(1 - data.zoom_factor) + 1
+            data.zoom_sign *= -1
+            # current_zoom = 1.0
             zoom_iteration = 0
 
         # Update the boundaries with the new zoom
