@@ -1,11 +1,8 @@
 import pygame
 import numpy as np
 from numba import jit, prange
-from multiprocessing import Process, Queue
 import math
 import random
-import asyncio
-import threading
 
 class RenderData:
     fps: int
@@ -74,9 +71,12 @@ def calculate_fractal(data: RenderData, width, height, fractal_set, screen, cloc
     iterations = fractal_set(c, data.max_iterations, data.constant)
 
     # Map the number of iterations to colors
-    colors = np.zeros((height, width, 3), dtype=np.uint8)
-    for i in range(len(data.color_palette)):
-        colors[iterations == i] = data.color_palette[i]
+    color_mapping = np.zeros((data.max_iterations, 3), dtype=np.uint8)
+    for i, color in enumerate(data.color_palette):
+        color_mapping[i] = color
+
+    # Use direct mapping for colors
+    colors = color_mapping[iterations]
 
     pygame.surfarray.blit_array(screen, colors.swapaxes(0, 1))
 
@@ -125,7 +125,7 @@ def init_julia():
     data = RenderData()
 
     # Set up the clock for controlling the frame rate
-    data.fps = 120
+    data.fps = 30
 
     # Julia set parameters
     data.max_iterations = 100
@@ -133,7 +133,7 @@ def init_julia():
     data.x_max = 2.0
     data.y_min = -2.0
     data.y_max = 2.0
-    data.zoom_factor = 0.9  # Zoom factor (0 to 1)
+    data.zoom_factor = 0.985  # Zoom factor (0 to 1)
     data.zoom_sign = 1
     data.zoom_position_x = -0.527504221
     data.zoom_position_y = 0.075911712  # Set center for Julia set
@@ -156,8 +156,8 @@ def init_julia():
 
 def edit_var(data, i):
     # data.zoom_factor = data.zoom_factor + 0.000007 * data.zoom_sign
-    data.cx += (2*math.sin(i%100)-1) * 0.00001
-    data.cy -= (2*math.sin(i%100)-1) * 0.00002
+    data.cx += (2*math.sin(i%200)-1) * 0.00001
+    data.cy -= (2*math.sin(i%200)-1) * 0.00002
     data.constant = complex(data.cx, data.cy)
 
 def luminance(color):
@@ -208,7 +208,7 @@ def display(data: RenderData, fractal_set):
         calculate_fractal(data, width, height, fractal_set, screen, clock)
 
         i+=1
-        edit_var(data, i)
+        # edit_var(data, i)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
