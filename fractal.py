@@ -2,7 +2,7 @@ import pygame
 import numpy as np
 from numba import jit, prange
 import threading
-
+import math
 
 class RenderData:
     fps: int
@@ -22,9 +22,10 @@ class RenderData:
     green_multiplier: float
     blue_multiplier: float
 
+    constant: complex
 
 @jit(nopython=True, parallel=True)
-def mandelbrot(c, max_iterations):
+def mandelbrot(c, max_iterations, constant = None):
     height, width = c.shape
     iterations = np.zeros((height, width), dtype=np.int64)
 
@@ -40,18 +41,40 @@ def mandelbrot(c, max_iterations):
 
     return iterations
 
+@jit(nopython=True, parallel=True)
+def julia(c, max_iterations, julia_constant):
+    height, width = c.shape
+    iterations = np.zeros((height, width), dtype=np.int64)
 
-def draw_fractal(screen, colors):
+    for y in prange(height):
+        for x in prange(width):
+            zx, zy = c[y, x].real, c[y, x].imag
+            for i in range(max_iterations):
+                new_zx = zx * zx - zy * zy + julia_constant.real
+                new_zy = 2 * zx * zy + julia_constant.imag
+                zx, zy = new_zx, new_zy
+                if zx * zx + zy * zy > 4:
+                    break
+                iterations[y, x] = i
+
+    return iterations
+
+def draw_fractal(screen, colors, clock):
+    global last_time
     pygame.surfarray.blit_array(screen, colors.swapaxes(0, 1))
+    fps = clock.get_fps()
+    fps_font = pygame.font.Font(None, 20)
+    fps_text = fps_font.render(str(int(fps)), True, (200, 200, 200))
+    screen.blit(fps_text, (10, 10))
     pygame.display.flip()
 
 
-def calculate_fractal(data: RenderData, height, width):
+def calculate_fractal(data: RenderData, height, width, fractal_set):
     real, imag = np.meshgrid(
         np.linspace(data.x_min, data.x_max, width), np.linspace(data.y_min, data.y_max, height)
     )
     c = real + 1j * imag
-    iterations = mandelbrot(c, data.max_iterations)
+    iterations = fractal_set(c, data.max_iterations, data.constant)
 
     # Map the number of iterations to colors
     colors = np.zeros((height, width, 3), dtype=np.uint8)
@@ -96,13 +119,13 @@ def smooth_zoom(current_zoom, target_zoom, zoom_iteration, zoom_duration):
     return current_zoom + (target_zoom - current_zoom) * t
 
 
-def render_fractal(screen, width, height, data: RenderData):
+def render_fractal(screen, width, height, data: RenderData, fractal_set, clock):
     while True:
-        colors = calculate_fractal(data, width, height)
-        draw_fractal(screen, colors)
+        colors = calculate_fractal(data, width, height, fractal_set)
+        draw_fractal(screen, colors, clock)
 
 
-def init_render():
+def init_mandelbrot():
     data = RenderData()
 
     # Set up the clock for controlling the frame rate
@@ -115,25 +138,60 @@ def init_render():
     data.x_max = 1.0
     data.y_min = -1.5
     data.y_max = 1.5
-    data.zoom_factor = 0.97  # Zoom factor (0 to 1)
+    data.zoom_factor = 0.995  # Zoom factor (0 to 1)
     data.zoom_position_x = -0.7462
     data.zoom_position_y = -0.1495  # Seahorse Valley zoom position
     data.zoom_duration = 900  # Number of zoom iterations
 
     # Define color variables
-    data.red_multiplier = 0.7
-    data.green_multiplier = 0.1
-    data.blue_multiplier = 0.9
+    data.red_multiplier = 1.5
+    data.green_multiplier = 0.3
+    data.blue_multiplier = 1.7
 
-    return data
+    data.cx = 0
+    data.cy = 0
+    data.constant = 0
+    return data, mandelbrot
+
+def init_julia():
+    data = RenderData()
+
+    # Set up the clock for controlling the frame rate
+    data.fps = 120
+    data.frame_duration = 1000 // data.fps
+
+    # Julia set parameters
+    data.max_iterations = 500
+    data.x_min = -2.0
+    data.x_max = 2.0
+    data.y_min = -2.0
+    data.y_max = 2.0
+    data.zoom_factor = 0.995  # Zoom factor (0 to 1)
+    data.zoom_position_x = -0.527504221
+    data.zoom_position_y = 0.075911712  # Set center for Julia set
+    data.zoom_duration = 1500  # Number of zoom iterations
+
+    # Define color variables
+    data.red_multiplier = 0.9
+    data.green_multiplier = 0.05
+    data.blue_multiplier = 0.7
+
+    data.cx = -0.8
+    data.cy = 0.156
+
+    data.constant = complex(-0.8, 0.156)
+
+    return data, julia
 
 
-def display(data: RenderData):
+def display(data: RenderData, fractal_set):
     # Pygame initialization
     pygame.init()
     width, height = 600, 600
     screen = pygame.display.set_mode((width, height))
-    pygame.display.set_caption("Mandelbrot Fractal")
+    pygame.display.set_caption("Fractal")
+    global last_time
+    clock = pygame.time.Clock()
 
     zoom_iteration = 0
     running = True
@@ -145,11 +203,33 @@ def display(data: RenderData):
         data.y_max,
     )
 
-    render_thread = threading.Thread(target=render_fractal, args=[screen, width, height, data])
+    render_thread = threading.Thread(target=render_fractal, args=[screen, width, height, data, fractal_set, clock])
     render_thread.daemon = True
     render_thread.start()
 
+    i = 0
     while running:
+        i+=1
+        if i % 70 < 5:
+            data.red_multiplier = 1.8
+            data.green_multiplier = 0.1
+            data.blue_multiplier = 1.9
+        else:
+            data.red_multiplier = 0.9
+            data.green_multiplier = 0.05
+            data.blue_multiplier = 0.7
+
+        data.zoom_factor = min(data.zoom_factor + 0.000001, 1)
+        data.cx += (2*math.sin(i/69)-1) * 0.00011
+        data.cy -= (2*math.sin(i/42)-1) * 0.00012
+        # data.cy *= (0.999 + math.tan(i/50) / 1000)
+        data.red_multiplier -= math.sin(i/50) / 400
+        data.green_multiplier -= math.cos(i/50) / 1500
+        data.blue_multiplier -= math.cos(i/50) / 500
+        # print(math.cos(i/100) / 300)
+        # data.cy += math.sin(i/10) / 300
+        data.constant = complex(data.cx, data.cy)
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -169,6 +249,7 @@ def display(data: RenderData):
                 original_y_min,
                 original_y_max,
             )
+            data.zoom_factor = 0.995
             current_zoom = 1.0
             zoom_iteration = 0
 
@@ -189,11 +270,12 @@ def display(data: RenderData):
             data.y_max = data.zoom_position_y + range_y * (1 - zoom_y)
 
         # Add a delay to control the frame rate
-        pygame.time.wait(data.frame_duration)
+        clock.tick(data.fps)
 
     pygame.quit()
 
 
 if __name__ == "__main__":
-    data = init_render()
-    display(data)
+    # data, fractal_set = init_mandelbrot()
+    data, fractal_set = init_julia()
+    display(data, fractal_set)
