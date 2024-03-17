@@ -1,5 +1,4 @@
 import soundcard as sc
-import soundfile as sf
 import numpy as np
 
 

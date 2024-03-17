@@ -1,3 +1,4 @@
 SoundCard
 numpy
-
+pygame
+numba
