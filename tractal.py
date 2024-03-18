@@ -13,6 +13,7 @@ class RenderData:
     y_min: float
     y_max: float
     zoom_factor: float
+    zoom_speed: float
     zoom_sign: int
     zoom_position_x: float
     zoom_position_y: float
@@ -24,6 +25,9 @@ class RenderData:
 
     constant: complex
     color_palette: list
+    color_palette_list: list
+    color_step: int
+    current_color: int
 
 @jit(nopython=True, parallel=True)
 def mandelbrot(c, max_iterations, constant = None):
@@ -78,6 +82,14 @@ def calculate_fractal(data: RenderData, width, height, fractal_set, screen, cloc
     # Use direct mapping for colors
     colors = color_mapping[iterations]
 
+
+    # max_index = np.argmin(iterations)
+    # max_position = np.unravel_index(max_index, iterations.shape)
+    # print(max_position)
+
+    # data.zoom_position_x = max_position[0] / width
+    # data.zoom_position_y = max_position[1] / height
+
     pygame.surfarray.blit_array(screen, colors.swapaxes(0, 1))
 
     fps = clock.get_fps()
@@ -125,19 +137,23 @@ def init_julia():
     data = RenderData()
 
     # Set up the clock for controlling the frame rate
-    data.fps = 30
+    data.fps = 60
 
     # Julia set parameters
-    data.max_iterations = 100
+    data.max_iterations = 1000
     data.x_min = -2.0
     data.x_max = 2.0
     data.y_min = -2.0
     data.y_max = 2.0
     data.zoom_factor = 0.985  # Zoom factor (0 to 1)
+    # data.zoom_factor = 1  # Zoom factor (0 to 1)
+    data.zoom_speed = 1 - data.zoom_factor
     data.zoom_sign = 1
-    data.zoom_position_x = -0.527504221
-    data.zoom_position_y = 0.075911712  # Set center for Julia set
-    data.zoom_duration = 1500  # Number of zoom iterations
+    # data.zoom_position_x = -0.527504221
+    # data.zoom_position_y = 0.075911712  # Set center for Julia set
+    data.zoom_position_x = 0
+    data.zoom_position_y = 0  # Set center for Julia set
+    data.zoom_duration = 500  # Number of zoom iterations
 
     # Define color variables
     data.red_multiplier = 0.9
@@ -149,48 +165,58 @@ def init_julia():
 
     data.constant = complex(-0.8, 0.156)
 
-    data.color_palette = generate_palette([[0, 0, 0], [255, 255, 255]], data.max_iterations)
+    data.color_palette = []
+    data.color_palette_list = []
+    data.color_step = 100
+    data.current_color = 0
 
     return data, julia
 
 
-def edit_var(data, i):
-    # data.zoom_factor = data.zoom_factor + 0.000007 * data.zoom_sign
-    data.cx += (2*math.sin(i%200)-1) * 0.00001
-    data.cy -= (2*math.sin(i%200)-1) * 0.00002
+def edit_var(data, zoom_iteration, i):
+    if data.color_step == 0:
+        data.current_color = (data.current_color + 1) % 20
+        data.color_step = 100
+    data.color_palette = transform_palette_iterative(data.color_palette, data.color_palette_list[(data.current_color + 1) % 20], data.color_step)
+    data.color_step -= 1
+
+    if data.zoom_sign == 1:
+        zoom_iteration = data.zoom_duration - zoom_iteration
+    data.zoom_factor = 1 - data.zoom_sign * data.zoom_speed * zoom_iteration / data.zoom_duration
+    data.cx = -0.8 + 0.00003 * zoom_iteration
+    data.cy = 0.156 - 0.00001 * zoom_iteration
     data.constant = complex(data.cx, data.cy)
+    return data
 
 def luminance(color):
-    # Calculate luminance based on RGB values
-    r, g, b = color
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return np.dot(color, [0.2126, 0.7152, 0.0722])
 
 def generate_palette(points, num_colors):
-    # Sort points based on luminance and index to maintain relative order
-    sorted_points = sorted(points, key=lambda x: (luminance(x), points.index(x)))
-
+    sorted_points = np.array(sorted(points, key=lambda x: (luminance(x), points.index(x))))
     num_points = len(sorted_points)
-    palette = []
 
-    # Calculate the number of colors between each pair of points
     colors_between_points = num_colors // (num_points - 1)
-    remainder = num_colors % (num_points - 1)  # Distribute remaining colors evenly
+    remainder = num_colors % (num_points - 1)
 
-    # Iterate over each pair of adjacent points
+    palette = []
     for i in range(num_points - 1):
         color1 = sorted_points[i]
         color2 = sorted_points[i + 1]
 
-        # Calculate the number of colors for the current pair of points
         colors_for_pair = colors_between_points + (1 if i < remainder else 0)
 
-        # Interpolate between the colors of the current pair of points
-        for j in range(colors_for_pair):
-            ratio = j / (colors_for_pair - 1)
-            color = np.array(color1) * (1 - ratio) + np.array(color2) * ratio
-            palette.append([int(c) for c in color])
+        ratios = np.linspace(0, 1, colors_for_pair)
+        colors = color1 * (1 - ratios[:, np.newaxis]) + color2 * ratios[:, np.newaxis]
+        palette.extend(colors.astype(np.int32).tolist())
 
     return palette
+
+
+def transform_palette_iterative(color_palette, target_palette, steps):
+    for i in range(len(color_palette)):
+        for channel in range(3):
+            color_palette[i][channel] -= (color_palette[i][channel] - target_palette[i][channel]) / steps
+    return color_palette
 
 def display(data: RenderData, fractal_set):
     # Pygame initialization
@@ -200,27 +226,28 @@ def display(data: RenderData, fractal_set):
     pygame.display.set_caption("Fractal")
     clock = pygame.time.Clock()
 
+    for i in range(20):
+        nb_color = 8
+        rng_colors = [[0, 0, 0]] * nb_color
+        rng_colors[-1] = [255,255,255]
+        for i in range(1,nb_color-1):
+            rng_colors[i] = [random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)]
+        data.color_palette_list.append(generate_palette(rng_colors, data.max_iterations))
+    data.color_palette = data.color_palette_list[0]
+
     zoom_iteration = 0
     running = True
     current_zoom = 1.0
-    i = 0
+    i=0
     while running:
-        calculate_fractal(data, width, height, fractal_set, screen, clock)
-
         i+=1
-        # edit_var(data, i)
+        calculate_fractal(data, width, height, fractal_set, screen, clock)
+        data = edit_var(data, zoom_iteration, i)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_c:
-                    data.max_iterations = 500
-                    nb_color = 8
-                    rng_colors = [[0, 0, 0]] * nb_color
-                    for i in range(1, nb_color):
-                        rng_colors[i] = [random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)]
-                    data.color_palette = generate_palette(rng_colors, 500)
                 if event.key == pygame.K_ESCAPE:
                     running = False
 
@@ -236,7 +263,10 @@ def display(data: RenderData, fractal_set):
             #     original_y_min,
             #     original_y_max,
             # )
-            data.zoom_factor = data.zoom_sign * abs(1 - data.zoom_factor) + 1
+            if data.zoom_factor > 1:
+                data.zoom_position_x = -0.527504221
+                data.zoom_position_y = 0.075911712
+                data.zoom_duration = 1200
             data.zoom_sign *= -1
             # current_zoom = 1.0
             zoom_iteration = 0
