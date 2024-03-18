@@ -19,6 +19,12 @@ class RenderData:
     zoom_position_y: float
     zoom_duration: int
 
+    prec_frame: np.ndarray
+    future_frame: np.ndarray
+    intermediate_frames: int
+    num_intermediate_frames: int
+    interpolate_frame: list
+
     red_multiplier: float
     green_multiplier: float
     blue_multiplier: float
@@ -66,8 +72,25 @@ def julia(c, max_iterations, julia_constant):
                     break
     return iterations
 
+@jit(nopython=True, parallel=True)
+def interpolate_frames(frame1, frame2, num_intermediate_frames):
+#     write an optimized python function that takes a frame1, frame2 and number_frame
+# frame1: np.ndarray
+# frame2: np.ndarray
+# number_frame: int
+# it returns a list of frames interpolate between those 2 frames
+    return [frame2] * (num_intermediate_frames + 1)
+    interpolated_frames = []
+    for i in range(num_intermediate_frames + 1):
+        # Compute interpolation factor (0 to 1)
+        t = i / (num_intermediate_frames + 1)
+        
+        # Interpolate each pixel between frame1 and frame2
+        interpolated_frame = (1 - t) * frame1 + t * frame2
+        interpolated_frames.append(interpolated_frame)
+    return interpolated_frames
 
-def calculate_fractal(data: RenderData, width, height, fractal_set, screen, clock):
+def calculate_fractal(data: RenderData, width, height, fractal_set):
     real, imag = np.meshgrid(
         np.linspace(data.x_min, data.x_max, width), np.linspace(data.y_min, data.y_max, height)
     )
@@ -82,14 +105,9 @@ def calculate_fractal(data: RenderData, width, height, fractal_set, screen, cloc
     # Use direct mapping for colors
     colors = color_mapping[iterations]
 
+    return colors
 
-    # max_index = np.argmin(iterations)
-    # max_position = np.unravel_index(max_index, iterations.shape)
-    # print(max_position)
-
-    # data.zoom_position_x = max_position[0] / width
-    # data.zoom_position_y = max_position[1] / height
-
+def display_fractal(screen, colors, clock):
     pygame.surfarray.blit_array(screen, colors.swapaxes(0, 1))
 
     fps = clock.get_fps()
@@ -137,7 +155,7 @@ def init_julia():
     data = RenderData()
 
     # Set up the clock for controlling the frame rate
-    data.fps = 60
+    data.fps = 30
 
     # Julia set parameters
     data.max_iterations = 1000
@@ -154,6 +172,12 @@ def init_julia():
     data.zoom_position_x = 0
     data.zoom_position_y = 0  # Set center for Julia set
     data.zoom_duration = 500  # Number of zoom iterations
+
+    data.prec_frame = None
+    data.future_frame = None
+    data.intermediate_frames = 0
+    data.num_intermediate_frames = 100
+    data.interpolate_frame = []
 
     # Define color variables
     data.red_multiplier = 0.9
@@ -218,6 +242,44 @@ def transform_palette_iterative(color_palette, target_palette, steps):
             color_palette[i][channel] -= (color_palette[i][channel] - target_palette[i][channel]) / steps
     return color_palette
 
+def calculate_zoom(data, current_zoom, zoom_iteration):
+    if zoom_iteration < data.zoom_duration:
+        current_zoom = smooth_zoom(
+            current_zoom, data.zoom_factor, zoom_iteration, data.zoom_duration
+        )
+        zoom_iteration += 1
+    else:
+        # data.x_min, data.x_max, data.y_min, data.y_max= (
+        #     original_x_min,
+        #     original_x_max,
+        #     original_y_min,
+        #     original_y_max,
+        # )
+        if data.zoom_factor > 1:
+            data.zoom_position_x = -0.527504221
+            data.zoom_position_y = 0.075911712
+            data.zoom_duration = 1200
+        data.zoom_sign *= -1
+        # current_zoom = 1.0
+        zoom_iteration = 0
+
+    # Update the boundaries with the new zoom
+    if current_zoom != 1.0:
+        # Calculate the new center based on the zoom position
+        zoom_x = (data.zoom_position_x - data.x_min) / (data.x_max - data.x_min)
+        zoom_y = (data.zoom_position_y - data.y_min) / (data.y_max - data.y_min)
+
+        # Calculate the new range based on the zoom factor
+        range_x = (data.x_max - data.x_min) * current_zoom
+        range_y = (data.y_max - data.y_min) * current_zoom
+
+        # Update the boundaries with the new zoom
+        data.x_min = data.zoom_position_x - range_x * zoom_x
+        data.x_max = data.zoom_position_x + range_x * (1 - zoom_x)
+        data.y_min = data.zoom_position_y - range_y * zoom_y
+        data.y_max = data.zoom_position_y + range_y * (1 - zoom_y)
+    return data, current_zoom, zoom_iteration
+
 def display(data: RenderData, fractal_set):
     # Pygame initialization
     pygame.init()
@@ -239,11 +301,11 @@ def display(data: RenderData, fractal_set):
     running = True
     current_zoom = 1.0
     i=0
+    intermediate_frames = 0
+    prec_frame = None
+    future_frame = None
+    interpolate_frame = None
     while running:
-        i+=1
-        calculate_fractal(data, width, height, fractal_set, screen, clock)
-        data = edit_var(data, zoom_iteration, i)
-
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -251,41 +313,35 @@ def display(data: RenderData, fractal_set):
                 if event.key == pygame.K_ESCAPE:
                     running = False
 
-        if zoom_iteration < data.zoom_duration:
-            current_zoom = smooth_zoom(
-                current_zoom, data.zoom_factor, zoom_iteration, data.zoom_duration
-            )
-            zoom_iteration += 1
+        i+=1
+        if intermediate_frames == 0:
+            prec_frame = calculate_fractal(data, width, height, fractal_set)
+            display_fractal(screen, prec_frame, clock)
+            intermediate_frames = data.num_intermediate_frames + 1
+
+            data, current_zoom, zoom_iteration = calculate_zoom(data, current_zoom, zoom_iteration)
+            data = edit_var(data, zoom_iteration, i)
+        elif intermediate_frames == data.num_intermediate_frames + 1:
+            future_frame = calculate_fractal(data, width, height, fractal_set)
+            interpolate_frame = interpolate_frames(prec_frame, future_frame, data.num_intermediate_frames)
+
+            display_fractal(screen, interpolate_frame[data.num_intermediate_frames - intermediate_frames - 1], clock)
+            intermediate_frames -= 1
+
+            data, current_zoom, zoom_iteration = calculate_zoom(data, current_zoom, zoom_iteration)
+            data = edit_var(data, zoom_iteration, i)
+        elif intermediate_frames == data.num_intermediate_frames:
+            display_fractal(screen, future_frame, clock)
+            intermediate_frames -= 1
+            data, current_zoom, zoom_iteration = calculate_zoom(data, current_zoom, zoom_iteration)
+            data = edit_var(data, zoom_iteration, i)
         else:
-            # data.x_min, data.x_max, data.y_min, data.y_max= (
-            #     original_x_min,
-            #     original_x_max,
-            #     original_y_min,
-            #     original_y_max,
-            # )
-            if data.zoom_factor > 1:
-                data.zoom_position_x = -0.527504221
-                data.zoom_position_y = 0.075911712
-                data.zoom_duration = 1200
-            data.zoom_sign *= -1
-            # current_zoom = 1.0
-            zoom_iteration = 0
-
-        # Update the boundaries with the new zoom
-        if current_zoom != 1.0:
-            # Calculate the new center based on the zoom position
-            zoom_x = (data.zoom_position_x - data.x_min) / (data.x_max - data.x_min)
-            zoom_y = (data.zoom_position_y - data.y_min) / (data.y_max - data.y_min)
-
-            # Calculate the new range based on the zoom factor
-            range_x = (data.x_max - data.x_min) * current_zoom
-            range_y = (data.y_max - data.y_min) * current_zoom
-
-            # Update the boundaries with the new zoom
-            data.x_min = data.zoom_position_x - range_x * zoom_x
-            data.x_max = data.zoom_position_x + range_x * (1 - zoom_x)
-            data.y_min = data.zoom_position_y - range_y * zoom_y
-            data.y_max = data.zoom_position_y + range_y * (1 - zoom_y)
+            print(data.num_intermediate_frames - intermediate_frames - 1)
+            display_fractal(screen, interpolate_frame[data.num_intermediate_frames - intermediate_frames - 1], clock)
+            intermediate_frames -= 1
+            data, current_zoom, zoom_iteration = calculate_zoom(data, current_zoom, zoom_iteration)
+            data = edit_var(data, zoom_iteration, i)
+        
 
         # Add a delay to control the frame rate
         clock.tick(data.fps)
