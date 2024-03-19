@@ -28,8 +28,9 @@ class RenderData:
     color_step: int
     current_color: int
 
+
 @jit(nopython=True, parallel=True, fastmath=True)
-def mandelbrot(c, max_iterations, constant = None):
+def mandelbrot(c, max_iterations, constant=None):
     height, width = c.shape
     iterations = np.zeros((height, width), dtype=np.int64)
 
@@ -45,6 +46,7 @@ def mandelbrot(c, max_iterations, constant = None):
 
     return iterations
 
+
 @jit(nopython=True, parallel=True, fastmath=True)
 def julia(c, max_iterations, julia_constant):
     height, width = c.shape
@@ -57,13 +59,13 @@ def julia(c, max_iterations, julia_constant):
                 new_zx = zx * zx - zy * zy + julia_constant.real
                 new_zy = 2 * zx * zy + julia_constant.imag
                 zx, zy = new_zx, new_zy
-                
+
                 # Escape time optimization
                 if abs(zx) > 2.0 or abs(zy) > 2.0:
                     break
-                
-                iterations[y, x] = i # Update iteration count
-                
+
+                iterations[y, x] = i  # Update iteration count
+
                 # Early escape condition check
                 if i > 0 and (zx, zy) == (c[y, x].real, c[y, x].imag):
                     iterations[y, x] = max_iterations
@@ -71,20 +73,23 @@ def julia(c, max_iterations, julia_constant):
 
     return iterations
 
+
 def calculate_fractal(data: RenderData, width, height, fractal_set):
     real, imag = np.meshgrid(
-        np.linspace(data.x_min, data.x_max, width), np.linspace(data.y_min, data.y_max, height)
+        np.linspace(data.x_min, data.x_max, width),
+        np.linspace(data.y_min, data.y_max, height),
     )
     c = real + 1j * imag
     iterations = fractal_set(c, data.max_iterations, data.constant)
 
     # Precompute color mapping
-    color_mapping = np.array(data.color_palette[:data.max_iterations], dtype=np.uint8)
+    color_mapping = np.array(data.color_palette[: data.max_iterations], dtype=np.uint8)
 
     # Use direct mapping for colors
     colors = color_mapping[iterations]
 
     return colors
+
 
 def display_fractal(screen, colors, clock):
     pygame.surfarray.blit_array(screen, colors.swapaxes(0, 1))
@@ -125,14 +130,15 @@ def init_mandelbrot():
     data.constant = 0
     return data, mandelbrot
 
+
 def init_julia():
     data = RenderData()
 
     # Set up the clock for controlling the frame rate
-    data.fps = 60
+    data.fps = 200
 
     # Julia set parameters
-    data.max_iterations = 3000
+    data.max_iterations = 1000
     data.x_min = -2.0
     data.x_max = 2.0
     data.y_min = -2.0
@@ -163,7 +169,11 @@ def edit_var(data, zoom_iteration, i):
     if data.color_step == 0:
         data.current_color = (data.current_color + 1) % 20
         data.color_step = 100
-    data.color_palette = transform_palette_iterative(data.color_palette, data.color_palette_list[(data.current_color + 1) % 20], data.color_step)
+    data.color_palette = transform_palette_iterative(
+        data.color_palette,
+        data.color_palette_list[(data.current_color + 1) % 20],
+        data.color_step,
+    )
     data.color_step -= 1
 
     if data.zoom_sign == 1:
@@ -174,8 +184,10 @@ def edit_var(data, zoom_iteration, i):
     data.constant = complex(data.cx, data.cy)
     return data
 
+
 def luminance(color):
     return np.dot(color, [0.2126, 0.7152, 0.0722])
+
 
 def generate_palette(points, num_colors):
     sorted_points = np.array(sorted(points, key=lambda x: (luminance(x), points.index(x))))
@@ -201,8 +213,11 @@ def generate_palette(points, num_colors):
 def transform_palette_iterative(color_palette, target_palette, steps):
     for i in range(len(color_palette)):
         for channel in range(3):
-            color_palette[i][channel] -= (color_palette[i][channel] - target_palette[i][channel]) / steps
+            color_palette[i][channel] -= (
+                color_palette[i][channel] - target_palette[i][channel]
+            ) / steps
     return color_palette
+
 
 def calculate_zoom(data, current_zoom, zoom_iteration):
     if zoom_iteration < data.zoom_duration:
@@ -234,6 +249,7 @@ def calculate_zoom(data, current_zoom, zoom_iteration):
         data.y_max = data.zoom_position_y + range_y * (1 - zoom_y)
     return data, current_zoom, zoom_iteration
 
+
 def display(data: RenderData, fractal_set):
     # Pygame initialization
     pygame.init()
@@ -245,47 +261,45 @@ def display(data: RenderData, fractal_set):
     for i in range(20):
         nb_color = 10
         rng_colors = [[0, 0, 0]] * nb_color
-        rng_colors[-1] = [255,255,255]
-        for i in range(1,nb_color-1):
-            rng_colors[i] = [random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)]
+        rng_colors[-1] = [255, 255, 255]
+        for i in range(1, nb_color - 1):
+            rng_colors[i] = [
+                random.randint(0, 255),
+                random.randint(0, 255),
+                random.randint(0, 255),
+            ]
         data.color_palette_list.append(generate_palette(rng_colors, data.max_iterations))
     data.color_palette = data.color_palette_list[0]
 
     zoom_iteration = 0
     running = True
     current_zoom = 1.0
-    i=0
+    i = 0
     terminate_flag = False
     lock = threading.Lock()
 
     def render_frame():
-        nonlocal i, zoom_iteration, current_zoom, data, terminate_flag, lock
+        nonlocal i, zoom_iteration, current_zoom, data, terminate_flag, lock, clock
         while not terminate_flag:
             with lock:  # Acquire lock before accessing shared data
                 colors = calculate_fractal(data, width, height, fractal_set)
                 display_fractal(screen, colors, clock)
                 data = edit_var(data, zoom_iteration, i)
-                data, current_zoom, zoom_iteration = calculate_zoom(data, current_zoom, zoom_iteration)
+                data, current_zoom, zoom_iteration = calculate_zoom(
+                    data, current_zoom, zoom_iteration
+                )
                 i += 1
 
     with ThreadPoolExecutor() as executor:
         while running:
             for event in pygame.event.get():
-                if event.type == pygame.QUIT:
+                if event.type == pygame.QUIT or (
+                    event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE
+                ):
                     running = False
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        running = False
-                        terminate_flag = True
+                    terminate_flag = True
 
-            # i+=1
-            # colors = calculate_fractal(data, width, height, fractal_set)
-            # display_fractal(screen, colors, clock)
-            # data = edit_var(data, zoom_iteration, i)
             executor.submit(render_frame)
-            # data, current_zoom, zoom_iteration = calculate_zoom(data, current_zoom, zoom_iteration)
-
-            # Add a delay to control the frame rate
             clock.tick(data.fps)
 
     pygame.quit()
