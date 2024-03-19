@@ -326,7 +326,7 @@ def calculate_zoom(data, current_zoom, zoom_iteration):
 def display(data: RenderData, fractal_set):
     # Pygame initialization
     pygame.init()
-    width, height = 800, 800
+    width, height = 960, 540
     screen = pygame.display.set_mode((width, height))
     pygame.display.set_caption("Fractal")
     clock = pygame.time.Clock()
@@ -410,6 +410,7 @@ def display(data: RenderData, fractal_set):
                     data.rotation_speed -= 0.5
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
                     data.kick = data.kick_max
+                    
 
             executor.submit(render_frame)
             clock.tick(data.fps)
