@@ -99,7 +99,7 @@ def record_sound(speaker_name:str | None = None, sample_rate:int = 48000, record
 
 def demo():
 	pygame.init()
-	width, height = 600, 600
+	width, height = 1920, 1080
 	screen = pygame.display.set_mode((width, height))
 	pygame.display.set_caption("dsp")
 	clock = pygame.time.Clock()
