@@ -2,3 +2,4 @@ SoundCard
 numpy
 pygame
 numba
+scipy
