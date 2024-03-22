@@ -2,8 +2,6 @@ import soundcard as sc
 import numpy as np
 import pygame
 from collections import deque
-from scipy.signal import hilbert
-from sklearn.linear_model import LinearRegression
 
 
 def get_amplitude(mic_data=None):
@@ -24,51 +22,14 @@ def get_rms(mic_data=None):
     return rms
 
 
-def detect_kick(data, rms_records, min_duration=0.4):
-    """
-    Detects a kick in the audio data with improved accuracy.
-    :param data: Audio data
-    :param rms_records: RMS records for noise floor calculation
-    :param min_duration: Minimum duration of a kick in seconds
-    :return: True if a kick is detected, False otherwise
-    """
-    # Calculate the amplitude envelope
-    if len(rms_records) == 30:
-        lst_sorted = np.sort(rms_records)
-        noise_floor = np.percentile(lst_sorted, 5)
-        # Use a dynamic threshold based on the noise floor and the data's characteristics
-        threshold = (
-            np.median(noise_floor) + np.std(data) * 2
-        )  # Adjust the multiplier based on data's standard deviation
-    else:
-        return False
-    envelope = np.abs(np.fft.fft(data))
-    # Find the indices where the envelope exceeds the threshold
-    kick_indices = np.where(envelope > threshold)[0]
-    # Check if there are enough indices to form a kick
-    if len(kick_indices) < min_duration * len(data):
-        return False
-    # Check if the kick has a quick decay
-    decay_start = np.argmax(envelope[kick_indices])
-    decay_end = np.argmin(envelope[kick_indices])
-    decay_duration = (decay_end - decay_start) / len(data)
-
-    if decay_duration < min_duration:
-        print("kick!")
-    return decay_duration < min_duration
-
-
 def get_bass_density(data, sample_rate=48000):
+    if len(data.shape) == 2:
+        data = data.flatten()
     data_array = np.frombuffer(data, dtype=np.int16)
-    # Perform FFT on the data
     fft_result = np.fft.fft(data_array)
-    # Calculate the absolute value of the FFT result to get the magnitude
     magnitude = np.abs(fft_result)
-    # Calculate the frequencies corresponding to the FFT result
     frequencies = np.fft.fftfreq(len(data_array), 1 / sample_rate)
-    # Filter the frequencies to get only the bass frequencies (20-150 Hz)
     bass_indices = np.where((frequencies >= 20) & (frequencies <= 150))[0]
-    # Calculate the bass density by summing the magnitudes of the bass frequencies
     bass_density = np.sum(magnitude[bass_indices])
     return bass_density
 
@@ -79,24 +40,15 @@ def get_kick(data, bass_record):
         percent = np.percentile(lst_sorted, 80)
     else:
         return False
-    # kick_indices = np.where(envelope > threshold)[0]
-    # # Check if there are enough indices to form a kick
-    # if len(kick_indices) < min_duration * len(data):
-    # 	return False
-    # # Check if the kick has a quick decay
-    # decay_start = np.argmax(envelope[kick_indices])
-    # decay_end = np.argmin(envelope[kick_indices])
-    # decay_duration = (decay_end - decay_start) / len(data)
-
-    # if decay_duration < min_duration:
-    # print(get_bass_density(data), percent)
-    return get_bass_density(data) * 0.8 > percent
+    return get_bass_density(data) * 0.9 > percent
 
 
 def record_sound(
-    speaker_name: str | None = None, sample_rate: int = 48000, record_sec: float = 1
+    speaker_name: str | None = None, sample_rate: int = 48000, record_sec: float = 1/30
 ):
     bass_records = deque(maxlen=200)
+    amp_records = deque(maxlen=50)
+    rms_records = deque(maxlen=50)
     if not speaker_name:
         speaker_name = str(sc.default_speaker().name)
     speaker = sc.get_microphone(id=speaker_name, include_loopback=True)
@@ -104,11 +56,13 @@ def record_sound(
         while True:
             data = rec.record(numframes=sample_rate * record_sec)
             bass_records.append(get_bass_density(data))
+            amp_records.append(get_amplitude(data))
+            rms_records.append(get_rms(data))
             yield (
-                get_amplitude(data),
-                get_rms(data),
+                np.median(amp_records),
+                np.median(rms_records),
                 get_kick(data, bass_records),
-                get_bass_density(data),
+                np.median(bass_records),
             )
 
 

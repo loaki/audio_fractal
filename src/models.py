@@ -4,8 +4,6 @@ class RenderData:
     fps: int
     width: int
     height: int
-    zoom_iteration: int
-    current_zoom: int
     fractal_func: types.FunctionType
 
     max_iterations: int
@@ -14,8 +12,9 @@ class RenderData:
     y_min: float
     y_max: float
     zoom_factor: float
-    zoom_speed: float
+    zoom_iteration: int
     zoom_sign: int
+    zoom_speed: float
     zoom_position_x: float
     zoom_position_y: float
     zoom_duration: int

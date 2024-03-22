@@ -32,9 +32,24 @@ def julia(c, max_iterations, julia_constant, rotation_angle_degrees):
 
     return iterations
 
-def edit_var(data, zoom_iteration, i):
+def edit_var(data, record):
+    if record:
+        print(record)
+        amp, rms, kick, bass = record
+        if kick and data.kick == 0:
+            data.kick = data.kick_max
+        if amp*amp > rms:
+            if data.rotation_speed >= 0:
+                data.rotation_speed = min(rms*1000, data.rotation_speed + 0.2)
+            else:
+                data.rotation_speed = max(rms*1000, data.rotation_speed - 0.2)
+        else:
+            if data.rotation_speed > 0.3:
+                data.rotation_speed = data.rotation_speed - 0.3
+            elif data.rotation_speed < 0.3:
+                data.rotation_speed = data.rotation_speed + 0.3
+
     if data.color_step == 0:
-        print(data.color_maps[(data.current_color + 1) % len(data.color_maps)])
         data.current_color = (data.current_color + 1) % len(data.color_maps)
         data.color_step = 100
     data.color_palette = transform_palette_iterative(
@@ -44,9 +59,15 @@ def edit_var(data, zoom_iteration, i):
     )
     data.color_step -= 1
 
+    if data.zoom_iteration >= data.zoom_duration:
+        data.zoom_sign *= -1
+        data.zoom_iteration = 0
     if data.zoom_sign == 1:
-        zoom_iteration = data.zoom_duration - zoom_iteration
-    data.zoom_factor = 1 - data.zoom_sign * data.zoom_speed * zoom_iteration / data.zoom_duration
+        zoom_iteration = data.zoom_duration - data.zoom_iteration
+    else:
+        zoom_iteration = data.zoom_iteration
+    data.zoom_factor = 1 + data.zoom_sign * data.zoom_speed * zoom_iteration / data.zoom_duration
+
     data.cx = -0.8 + 0.00003 * zoom_iteration
     data.cy = 0.156 - 0.00001 * zoom_iteration
     data.constant = complex(data.cx, data.cy)
@@ -57,7 +78,7 @@ def edit_var(data, zoom_iteration, i):
 def init_julia():
     data = RenderData()
 
-    data.fps = 60
+    data.fps = 30
 
     # Julia set parameters
     data.max_iterations = 500
@@ -65,9 +86,10 @@ def init_julia():
     data.x_max = 2.0
     data.y_min = -2.0
     data.y_max = 2.0
-    data.zoom_factor = 0.985  # Zoom factor (0 to 1)
-    data.zoom_speed = 1 - data.zoom_factor
+    data.zoom_factor = 1
+    data.zoom_speed = 0.01
     data.zoom_sign = 1
+    data.zoom_iteration = 0
     # data.zoom_position_x = -0.527504221
     # data.zoom_position_y = 0.075911712  # Set center for Julia set
     data.zoom_position_x = 0
