@@ -1,5 +1,12 @@
+import types
+
 class RenderData:
     fps: int
+    width: int
+    height: int
+    zoom_iteration: int
+    current_zoom: int
+    fractal_func: types.FunctionType
 
     max_iterations: int
     x_min: float

@@ -74,7 +74,7 @@ def get_bass_density(data, sample_rate=48000):
 
 
 def get_kick(data, bass_record):
-    if len(bass_record) == 60:
+    if len(bass_record) == 200:
         lst_sorted = np.array(bass_record)
         percent = np.percentile(lst_sorted, 80)
     else:
@@ -89,13 +89,14 @@ def get_kick(data, bass_record):
     # decay_duration = (decay_end - decay_start) / len(data)
 
     # if decay_duration < min_duration:
+    # print(get_bass_density(data), percent)
     return get_bass_density(data) * 0.8 > percent
 
 
 def record_sound(
-    speaker_name: str | None = None, sample_rate: int = 48000, record_sec: float = 0.5
+    speaker_name: str | None = None, sample_rate: int = 48000, record_sec: float = 1
 ):
-    bass_records = deque(maxlen=60)
+    bass_records = deque(maxlen=200)
     if not speaker_name:
         speaker_name = str(sc.default_speaker().name)
     speaker = sc.get_microphone(id=speaker_name, include_loopback=True)
@@ -113,7 +114,7 @@ def record_sound(
 
 def demo():
     pygame.init()
-    width, height = 1920, 1080
+    width, height = 600, 600
     screen = pygame.display.set_mode((width, height))
     pygame.display.set_caption("dsp")
     clock = pygame.time.Clock()
@@ -147,6 +148,8 @@ def demo():
         bar_height_b = min(10 + d[1] * 20000, 600)
         bar_height_c = min(10 + d[2] * 300, 600)
         bar_height_d = min(10 + d[3] / 1000000, 600)
+        if d[2]:
+            print("kick", d[0])
 
         clock.tick(fps)
 

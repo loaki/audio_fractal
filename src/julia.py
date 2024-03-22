@@ -32,7 +32,6 @@ def julia(c, max_iterations, julia_constant, rotation_angle_degrees):
 
     return iterations
 
-
 def edit_var(data, zoom_iteration, i):
     if data.color_step == 0:
         print(data.color_maps[(data.current_color + 1) % len(data.color_maps)])

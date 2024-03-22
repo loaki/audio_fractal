@@ -43,5 +43,5 @@ def create_palette(color_maps: list, max_iterations: int, num_colors: int):
         colors = cmap(np.linspace(0, 1, num_colors))
         rgb_colors = [[int(r * 255), int(g * 255), int(b * 255)] for r, g, b, _ in colors]
         rgb_colors = [[0, 0, 0]] + rgb_colors + [[255, 255, 255]]
-        palette.append(generate_palette(rgb_colors, max_iterations))
+        palette.append(np.array(generate_palette(rgb_colors, max_iterations), dtype=np.uint8))
     return palette

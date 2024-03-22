@@ -8,13 +8,13 @@ from julia import init_julia
 from models import RenderData
 
 
-def calculate_fractal(data: RenderData, width, height, fractal_set, color_mapping):
+def calculate_fractal(x_min, x_max, y_min, y_max, max_iterations, constant, rotation_angle_degrees, width, height, fractal_set, color_mapping):
     real, imag = np.meshgrid(
-        np.linspace(data.x_min, data.x_max, width),
-        np.linspace(data.y_min, data.y_max, height),
+        np.linspace(x_min, x_max, width),
+        np.linspace(y_min, y_max, height),
     )
     c = real + 1j * imag
-    iterations = fractal_set(c, data.max_iterations, data.constant, data.rotation_angle_degrees)
+    iterations = fractal_set(c, max_iterations, constant, rotation_angle_degrees)
 
     colors = color_mapping[iterations]
 
@@ -90,7 +90,7 @@ def display(data: RenderData, fractal_func, edit_func):
                         data.color_palette[: data.max_iterations], dtype=np.uint8
                     )
 
-                colors = calculate_fractal(data, width, height, fractal_func, color_mapping)
+                colors = calculate_fractal(data.x_min, data.x_max, data.y_min, data.y_max, data.max_iterations, data.constant, data.rotation_angle_degrees, width, height, fractal_func, color_mapping)
                 display_fractal(screen, colors, clock)
                 data = edit_func(data, zoom_iteration, i)
                 data, current_zoom, zoom_iteration = calculate_zoom(

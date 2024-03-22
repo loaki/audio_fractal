@@ -1,9 +1,9 @@
 import pygame
 import numpy as np
 import math
-from concurrent.futures import ThreadPoolExecutor
-import threading
-import multiprocessing as mp
+from multiprocessing.pool import ThreadPool
+import multiprocessing
+
 from julia import init_julia
 from models import RenderData
 
@@ -71,72 +71,64 @@ def display(data: RenderData, fractal_func, edit_func):
     running = True
     current_zoom = 1.0
     i = 0
-    lock = threading.Lock()
-    pool = mp.Pool()
+    # lock = threading.Lock()
 
-    # def render_frame():
-    #     nonlocal i, zoom_iteration, current_zoom, data, running, lock, clock
-    #     while running:
-    #         with lock:
-    #             if data.kick > 0:
-    #                 kick = -((data.kick - data.kick_max / 2) ** 2) / data.kick_max**2 + 1
-    #                 color_kick = [
-    #                     tuple(np.clip(c * math.exp(0.5 * kick * c / 255), 0, 255) for c in color)
-    #                     for color in color_mapping
-    #                 ]
-    #                 color_mapping = np.array(color_kick[: data.max_iterations], dtype=np.uint8)
-    #                 data.kick -= 1
-    #             else:
-    #                 color_mapping = np.array(
-    #                     data.color_palette[: data.max_iterations], dtype=np.uint8
-    #                 )
+    def render_frame(running, data):
+        # nonlocal i, zoom_iteration, current_zoom, data, running, lock, clock
+        while running:
+            # with lock:
+            if data.kick > 0:
+                kick = -((data.kick - data.kick_max / 2) ** 2) / data.kick_max**2 + 1
+                color_kick = [
+                    tuple(np.clip(c * math.exp(0.5 * kick * c / 255), 0, 255) for c in color)
+                    for color in data.color_palette
+                ]
+                color_mapping = np.array(color_kick[: data.max_iterations], dtype=np.uint8)
+                data.kick -= 1
+            else:
+                color_mapping = np.array(
+                    data.color_palette[: data.max_iterations], dtype=np.uint8
+                )
 
-    #             colors = calculate_fractal(data.x_min, data.x_max, data.y_min, data.y_max, data.max_iterations, data.constant, data.rotation_angle_degrees, width, height, fractal_func, color_mapping)
-                
-    #             i += 1
-    def render_frame(screen, colors, clock, i, data, zoom_iteration, current_zoom):
+            return calculate_fractal(data.x_min, data.x_max, data.y_min, data.y_max, data.max_iterations, data.constant, data.rotation_angle_degrees, width, height, fractal_func, color_mapping)
+            
+    pool = ThreadPool(multiprocessing.cpu_count())
+
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT or (
+                event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE
+            ):
+                running = False
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_a:
+                data.x_min -= 0.01 * (data.x_max - data.x_min)
+                data.x_max -= 0.01 * (data.x_max - data.x_min)
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_d:
+                data.x_min += 0.01 * (data.x_max - data.x_min)
+                data.x_max += 0.01 * (data.x_max - data.x_min)
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_w:
+                data.y_min -= 0.01 * (data.y_max - data.y_min)
+                data.y_max -= 0.01 * (data.y_max - data.y_min)
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_s:
+                data.y_min += 0.01 * (data.y_max - data.y_min)
+                data.y_max += 0.01 * (data.y_max - data.y_min)
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_q:
+                data.rotation_speed += 0.5
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_e:
+                data.rotation_speed -= 0.5
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+                data.kick = data.kick_max
+
+        colors = pool.apply(render_frame, (running, data))
         display_fractal(screen, colors, clock)
         data = edit_func(data, zoom_iteration, i)
         data, current_zoom, zoom_iteration = calculate_zoom(
             data, current_zoom, zoom_iteration
         )
+        i += 1
         clock.tick(data.fps)
 
-
-    with ThreadPoolExecutor() as executor:
-        while running:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT or (
-                    event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE
-                ):
-                    running = False
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_a:
-                    data.x_min -= 0.01 * (data.x_max - data.x_min)
-                    data.x_max -= 0.01 * (data.x_max - data.x_min)
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_d:
-                    data.x_min += 0.01 * (data.x_max - data.x_min)
-                    data.x_max += 0.01 * (data.x_max - data.x_min)
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_w:
-                    data.y_min -= 0.01 * (data.y_max - data.y_min)
-                    data.y_max -= 0.01 * (data.y_max - data.y_min)
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_s:
-                    data.y_min += 0.01 * (data.y_max - data.y_min)
-                    data.y_max += 0.01 * (data.y_max - data.y_min)
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_q:
-                    data.rotation_speed += 0.5
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_e:
-                    data.rotation_speed -= 0.5
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-                    data.kick = data.kick_max
-            color_mapping = np.array(
-                            data.color_palette[: data.max_iterations], dtype=np.uint8
-                        )
-            results = pool.starmap(calculate_fractal, [(data.x_min, data.x_max, data.y_min, data.y_max, data.max_iterations, data.constant, data.rotation_angle_degrees, width, height, fractal_func, color_mapping)])
-            executor.submit(render_frame, screen, results[0], clock, i, data, zoom_iteration, current_zoom)
-            
-            
-
-    pygame.quit()
+pygame.quit()
 
 
 if __name__ == "__main__":
